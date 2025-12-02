@@ -7,14 +7,18 @@
 #include <QGSP_BERT.hh>
 
 #include "MyDetectorConstruction.hh"
-#include "MyPrimaryGenerator.hh"
+#include "MyPrimaryGeneratorAction.hh"
+#include "MyRunAction.hh"
 
 
 int main(int argc, char** argv) {
-	G4RunManager *runManager = new G4RunManager();
-	runManager->SetUserInitialization(new MyDetectorConstruction());
+    auto *tupleID = new TupleID();
+
+    auto *runManager = new G4RunManager();
+	runManager->SetUserInitialization(new MyDetectorConstruction(tupleID));
 	runManager->SetUserInitialization(new QGSP_BERT());//new MyPhysicsList()
-	runManager->SetUserAction(new MyPrimaryGenerator());
+	runManager->SetUserAction(new MyPrimaryGeneratorAction(true));
+	runManager->SetUserAction(new MyRunAction(tupleID));
 	runManager->Initialize();
 			
 	G4UIExecutive *ui = nullptr;

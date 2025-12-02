@@ -1,11 +1,6 @@
-#include <G4NistManager.hh>
-#include <G4Box.hh>
-#include <G4PVPlacement.hh>
-#include <G4LogicalVolume.hh>
-#include <G4SystemOfUnits.hh>
-
+#include <G4SDManager.hh>
 #include "MyDetectorConstruction.hh"
-#include "GeometrySize.hh"
+#include "TrackerSensitiveDetector.hh"
 
 G4VPhysicalVolume *MyDetectorConstruction::Construct() {
     // Get nist material manager
@@ -43,14 +38,24 @@ G4VPhysicalVolume *MyDetectorConstruction::Construct() {
 
     detectorLogic = CreateDetector();
 //
-    auto rightDetector = new G4PVPlacement(0, G4ThreeVector(0, 0, detector_length / 2 + 0.1 * meter), detectorLogic,
+    auto rightDetector = new G4PVPlacement(nullptr, G4ThreeVector(0, 0, detector_length / 2 + 0.1 * meter), detectorLogic,
                                            "rightDetector", logicWorld, false, 0);
+    auto rotation =  new G4RotationMatrix(CLHEP::pi,CLHEP::pi,CLHEP::pi);
+    auto leftDetector = new G4PVPlacement(rotation,
+                                          G4ThreeVector(0, 0, -detector_length / 2 - 0.1 * meter),
+                                          detectorLogic,
+                                          "leftDetector",
+                                          logicWorld,
+                                          false,
+                                          1);
+
 
 
     return physWorld;
 }
 
-MyDetectorConstruction::MyDetectorConstruction() {
+MyDetectorConstruction::MyDetectorConstruction(TupleID *tupleID) {
+    this->tupleID = tupleID;
     defineMaterials();
 }
 
@@ -59,14 +64,15 @@ MyDetectorConstruction::~MyDetectorConstruction() {
 }
 
 G4LogicalVolume *MyDetectorConstruction::CreateDetector() {
+    ///========== Create detector ==========
     auto detectorSolid = new G4Box("detector",
                                     0.5 * detector_side_size,
                                      0.5 * detector_side_size,
                                   0.5 * detector_length);
     auto detector = new G4LogicalVolume(detectorSolid, vacuum, "detector");
 
+    ///========== Create Calorimeter ==========
     auto segmentLogic = CreateCalorimeterSection();
-
     for (int i = 0; i < calorimeter_number_of_segment; ++i) {
         std::string name = "segment_";
         name += std::to_string(i);
@@ -77,6 +83,34 @@ G4LogicalVolume *MyDetectorConstruction::CreateDetector() {
                                          calorimeter_lead_thickness) * i),
                 segmentLogic, name, detector, false, i);
     }
+
+    ///========== Create Tracking system ==========
+    auto trackingSectionLogic = createTrackingSection();
+    auto trackingLeftPhys = new G4PVPlacement(nullptr,
+                                              G4ThreeVector(0, 0, - 0.5 * m),
+                                              trackingSectionLogic,
+                                              "rightSectionLogic",
+                                              detector,
+                                              false,
+                                              0);
+    auto trackingRightPhys = new G4PVPlacement(nullptr,
+                                               G4ThreeVector(0, 0,  - 0.5 * m + distance_tracking_area),
+                                               trackingSectionLogic,
+                                               "leftSectionLogic",
+                                               detector,
+                                               false,
+                                               0);
+
+    ///========== Create Solenoid ==========
+    auto magnetLogic = createMagnet();
+    auto magnetPhys = new G4PVPlacement(nullptr,
+                                        G4ThreeVector(0, 0, -0.5 * m + 0.5 * distance_tracking_area),
+                                        magnetLogic,
+                                        "magnet",
+                                        detector,
+                                        false,
+                                        0);
+
     return detector;
 }
 
@@ -90,7 +124,7 @@ G4LogicalVolume *MyDetectorConstruction::CreateCalorimeterSection() {
                                   0.5 * calorimeter_plastic_thickness);
     auto leadLogic = new G4LogicalVolume(leadSolid, lead, "lead");
 
-    auto plasticLogic = new G4LogicalVolume(plasticSolid, plastic, "plastic");
+    plasticLogic = new G4LogicalVolume(plasticSolid, plastic, "plastic");
 
     auto leadPhys = new G4PVPlacement(0, G4ThreeVector(0, 0, -calorimeter_lead_thickness / 2), leadLogic, "lead",
                                       segmentLogic, false, 0);
@@ -105,4 +139,111 @@ void MyDetectorConstruction::defineMaterials() {
     vacuum = nist->FindOrBuildMaterial("G4_Galactic");
     lead = nist->FindOrBuildMaterial("G4_Pb");
     plastic = nist->FindOrBuildMaterial("G4_POLYSTYRENE");
+    silicon = nist->FindOrBuildMaterial("G4_Si");
 }
+
+G4LogicalVolume *MyDetectorConstruction::createTrackingLayer() {
+    auto layerSolid = new G4Box("layer",
+                                0.5 * detector_side_size,
+                                0.5 * detector_side_size,
+                                0.5 * tracking_thickness);
+    auto layerLogic = new G4LogicalVolume(layerSolid,
+                                          vacuum,
+                                          "layer");
+    auto siliconSolid = new G4Box("siliconBox",
+                                  0.5 * tracking_cell_size,
+                                  0.5 * tracking_cell_size,
+                                  0.5 * tracking_thickness);
+
+    siliconLogic = new G4LogicalVolume(siliconSolid,
+                                            silicon,
+                                            "siliconBox");
+
+    for (int i = 0; i < number_of_tracking_cell; ++i) {
+        for (int j = 0; j < number_of_tracking_cell; ++j) {
+            double x = tracking_cell_size / 2 + i * tracking_cell_size -
+                       tracking_cell_size * (number_of_tracking_cell / 2.);
+            double y = tracking_cell_size / 2 + j * tracking_cell_size -
+                       tracking_cell_size * (number_of_tracking_cell / 2.);
+            auto siliconPhys = new G4PVPlacement(nullptr,
+                                                 G4ThreeVector(x, y, 0),
+                                                 siliconLogic,
+                                                 "siliconPhys",
+                                                 layerLogic,
+                                                 false,
+                                                 i * number_of_tracking_cell + j);
+        }
+    }
+
+    return layerLogic;
+}
+
+G4LogicalVolume *MyDetectorConstruction::createTrackingSection() {
+    auto sectionSolid = new G4Box("segment",
+                                  0.5 * detector_side_size,
+                                  0.5 * detector_side_size,
+                                  0.5 * (distance_tracking_layer + 2 * tracking_thickness));
+    auto sectionLogic = new G4LogicalVolume(sectionSolid,
+                                            vacuum,
+                                            "segment");
+    auto layerLogic = createTrackingLayer();
+    auto rightLayer = new G4PVPlacement(nullptr,
+                                        G4ThreeVector(0,
+                                                      0,
+                                                      - 0.5 * (distance_tracking_layer + tracking_thickness)),
+                                        layerLogic,
+                                        "rightLayer",
+                                        sectionLogic,
+                                        false,
+                                        0);
+    auto leftLayer = new G4PVPlacement(nullptr,
+                                       G4ThreeVector(0,
+                                                     0,
+                                                     0.5 * (distance_tracking_layer + tracking_thickness)),
+                                       layerLogic,
+                                       "leftLayer",
+                                       sectionLogic,
+                                       false,
+                                       0);
+    return sectionLogic;
+}
+
+
+G4LogicalVolume *MyDetectorConstruction::createMagnet() {
+    auto magnetSolid = new G4Box("magnet",
+                                 0.5 * detector_side_size,
+                                 0.5 * detector_side_size,
+                                 1 * cm);
+    magnetLogic = new G4LogicalVolume(magnetSolid,
+                                      vacuum,
+                                      "magnet");
+    return magnetLogic;
+}
+
+void MyDetectorConstruction::ConstructSDandField() {
+    G4MagneticField *magneticField;
+    magneticField = new G4UniformMagField(G4ThreeVector(0.,
+                                                        50 * kilogauss,
+                                                        0.0));
+    auto fieldManager = new G4FieldManager();
+    fieldManager->SetDetectorField(magneticField);
+    fieldManager->CreateChordFinder(magneticField);
+    magnetLogic->SetFieldManager(fieldManager, true);
+    setupDetectors();
+}
+
+void MyDetectorConstruction::setupDetectors() {
+    auto sdman = G4SDManager::GetSDMpointer();
+    auto calorimeterSensDet = new CalorimeterSensitiveDetector("CalorimeterSensitiveDetector",
+                                                               tupleID);
+    sdman->AddNewDetector(calorimeterSensDet);
+    plasticLogic->SetSensitiveDetector(calorimeterSensDet);
+
+//    sdman->Activate("CalorimeterSensitiveDetector", false);
+
+    auto trackerSensDet = new TrackerSensitiveDetector("TrackerSensitiveDetector",
+                                                       tupleID);
+    sdman->AddNewDetector(trackerSensDet);
+    siliconLogic->SetSensitiveDetector(trackerSensDet);
+}
+
