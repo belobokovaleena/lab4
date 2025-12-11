@@ -1,4 +1,4 @@
-/vis/open OGL
+/vis/open OGLIX
 /control/saveHistory
 
 /vis/drawVolume worlds

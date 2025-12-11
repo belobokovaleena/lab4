@@ -33,6 +33,8 @@ G4bool TrackerSensitiveDetector::ProcessHits(G4Step *aStep, G4TouchableHistory *
 
         data.push_back(trackerData);
     }
+    
+    return true;
 
 }
 
